@@ -6,7 +6,6 @@ on:
   workflow_dispatch:
 
 env:
-  APP_NAME: OmnexFFPanel
   VERSION_CODE: 1
   VERSION_NAME: 1.108.1
 
@@ -28,10 +27,13 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept SDK licenses
+      - name: Accept SDK licenses and install tools
         run: |
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653" "cmake;3.22.1" 2>&1 || true
+          which sdkmanager
+          which cmake
+          ls $ANDROID_HOME/ndk/
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -44,23 +46,29 @@ jobs:
             gradle-${{ runner.os }}-
 
       - name: Make gradlew executable
-        run: chmod +x gradlew
+        run: chmod +x gradlew && ls -la gradlew
 
       - name: Debug Build
         run: |
-          ./gradlew assembleDebug \
-            --no-daemon \
-            --stacktrace 2>&1 | tee build_output.log
-        env:
-          GRADLE_OPTS: "-Xmx3072m -Dfile.encoding=UTF-8"
-          ANDROID_SDK_ROOT: $ANDROID_HOME
-          ANDROID_NDK_HOME: $ANDROID_HOME/ndk/25.2.9519653
-          TERM: dumb
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_NDK_HOME:$PATH
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_output.log
+          echo "---BUILD DONE---"
+          find . -name "*.apk" 2>/dev/null || echo "No APK found by find"
+          ls -la app/build/outputs/apk/ 2>/dev/null || echo "No outputs dir"
+          ls -laR app/build/outputs/ 2>/dev/null || echo "No outputs at all"
 
       - name: Find APK
         id: apk
         run: |
-          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          APK=$(find . -name "*.apk" -not -path "*/test/*" | head -1)
+          echo "Found APK: $APK"
+          if [ -z "$APK" ]; then
+            echo "ERROR: No APK found"
+            find . -name "*.apk" || echo "No APKs anywhere"
+            exit 1
+          fi
           echo "apk_path=$APK" >> $GITHUB_OUTPUT
           echo "apk_name=$(basename $APK)" >> $GITHUB_OUTPUT
           ls -lh "$APK"
@@ -80,4 +88,4 @@ jobs:
           echo "STATUS: ${{ job.status }}"
           echo "COMMIT: ${{ github.sha }}"
           echo "======================================"
-          tail -20 build_output.log 2>/dev/null || true
+          tail -30 build_output.log 2>/dev/null || true
