@@ -12,7 +12,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -24,24 +24,40 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept SDK licenses and install tools
+      - name: Install Android SDK tools
         run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lib32stdc++6 lib32z1 libtinfo5 2>/dev/null || true
+          
+          # Install command-line tools
+          mkdir -p $HOME/android-sdk/cmdline-tools/latest
+          wget -q https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip -O /tmp/sdk-tools.zip
+          unzip -q /tmp/sdk-tools.zip -d $HOME/android-sdk/cmdline-tools/latest/
+          rm /tmp/sdk-tools.zip
+          
+          export ANDROID_HOME=$HOME/android-sdk
+          export ANDROID_SDK_ROOT=$ANDROID_HOME
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+          
+          # Accept licenses and install tools
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653" "cmake;3.22.1" 2>&1 || true
-          which sdkmanager
-          which cmake
-          ls $ANDROID_HOME/ndk/
+          
+          # Verify
+          which sdkmanager && sdkmanager --version
+          which cmake && cmake --version
+          which adb && adb version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls $ANDROID_HOME/ndk/25.2.9519653/ || echo "NDK not found"
 
       - name: Create local.properties
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "ndk.dir=$ANDROID_HOME/ndk/25.2.9519653" >> local.properties
-          echo "cmake.dir=$ANDROID_HOME/cmake/3.22.1" >> local.properties
+          echo "sdk.dir=$HOME/android-sdk" > local.properties
+          echo "ndk.dir=$HOME/android-sdk/ndk/25.2.9519653" >> local.properties
+          echo "cmake.dir=$HOME/android-sdk/cmake/3.22.1" >> local.properties
           cat local.properties
-        shell: bash
+
+      - name: Cache Gradle
         uses: actions/cache@v4
         with:
           path: |
@@ -56,15 +72,21 @@ jobs:
 
       - name: Debug Build
         run: |
+          export ANDROID_HOME=$HOME/android-sdk
           export ANDROID_SDK_ROOT=$ANDROID_HOME
           export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_NDK_HOME:$PATH
+          
+          echo "=== Environment ==="
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "sdk.dir in local.properties:"
           cat local.properties
+          echo "=== Gradle Build ==="
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_output.log
-          echo "---BUILD DONE---"
-          find . -name "*.apk" 2>/dev/null || echo "No APK found by find"
-          ls -la app/build/outputs/apk/ 2>/dev/null || echo "No outputs dir"
-          ls -laR app/build/outputs/ 2>/dev/null || echo "No outputs at all"
+          echo "=== Build Complete ==="
+          echo "Finding APKs..."
+          find . -name "*.apk" -not -path "*/test/*" 2>/dev/null || echo "No APKs found"
+          ls -laR app/build/outputs/ 2>/dev/null || echo "No outputs dir"
 
       - name: Find APK
         id: apk
@@ -72,8 +94,10 @@ jobs:
           APK=$(find . -name "*.apk" -not -path "*/test/*" | head -1)
           echo "Found APK: $APK"
           if [ -z "$APK" ]; then
-            echo "ERROR: No APK found"
-            find . -name "*.apk" || echo "No APKs anywhere"
+            echo "ERROR: No APK found!"
+            find . -name "*.apk" 2>/dev/null || true
+            ls -la app/build/outputs/ 2>/dev/null || true
+            ls -laR app/build/outputs/apk/ 2>/dev/null || true
             exit 1
           fi
           echo "apk_path=$APK" >> $GITHUB_OUTPUT
