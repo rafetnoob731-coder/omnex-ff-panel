@@ -2,313 +2,82 @@ name: Build OMNEX FF Panel APK
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
-    inputs:
-      build_type:
-        description: 'Build Type'
-        required: true
-        default: 'debug'
-        type: choice
-        options:
-          - debug
-          - release
 
 env:
-  PROJECT_NAME: OmnexFFPanel
-  APPLICATION_ID: com.omnex.ffpanel
+  APP_NAME: OmnexFFPanel
   VERSION_CODE: 1
   VERSION_NAME: 1.108.1
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
-    
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [arm64-v8a, armeabi-v7a]
-    
+    timeout-minutes: 20
+
     steps:
-      # ==================== CHECKOUT ====================
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ==================== SETUP ANDROID SDK ====================
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: latest
-          platforms: android-34
-          build-tools: 34.0.0
-          ndk: 25.2.9519653
-          cmake: 3.22.1
-
-      # ==================== CACHE ====================
-      - name: Cache Gradle
-        uses: actions/cache@v3
-        with:
-          path: ~/.gradle/caches
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-          save-method: merge
-
-      - name: Cache Gradle Wrapper
-        uses: actions/cache@v3
-        with:
-          path: ~/.gradle/wrapper
-          key: gradle-wrapper-${{ runner.os }}-${{ hashFiles('**/gradle/wrapper/gradle-wrapper.properties') }}
-
-      # ==================== SETUP JAVA ====================
       - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      # ==================== GRANT EXECUTE PERMISSIONS ====================
-      - name: Grant Execute Permissions
-        run: |
-          chmod +x gradlew
-          find . -name "*.sh" -exec chmod +x {} \;
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      # ==================== VALIDATE GRADLE ====================
-      - name: Validate Gradle Wrapper
+      - name: Accept SDK licenses
         run: |
-          ./gradlew --version
-          ./gradlew tasks --all
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653" "cmake;3.22.1" 2>&1 || true
 
-      # ==================== BUILD APK ====================
-      - name: Build ${{ github.event.inputs.build_type || 'debug' }} APK
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', '**/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Debug Build
         run: |
-          BUILD_TYPE="${{ github.event.inputs.build_type || 'debug' }}"
-          ./gradlew assemble${BUILD_TYPE^} \
-            -PbuildType=$BUILD_TYPE \
-            -Pandroid.injected.signing.store.file=${{ secrets.KEYSTORE_FILE }} \
-            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
-            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }} \
+          ./gradlew assembleDebug \
             --no-daemon \
-            --stacktrace \
-            --info 2>&1 | tee build_output.log
+            --stacktrace 2>&1 | tee build_output.log
         env:
-          GRADLE_OPTS: "-Xmx4096m -Dfile.encoding=UTF-8"
-          TERM: dumb
-
-      # ==================== ASSEMBLE NATIVE C++ ====================
-      - name: Build Native Libraries
-        run: |
-          ./gradlew :app:externalNativeBuild${{ github.event.inputs.build_type || 'debug' }} \
-            --no-daemon \
-            --stacktrace \
-            --info 2>&1 | tee native_build_output.log
-        env:
-          GRADLE_OPTS: "-Xmx4096m -Dfile.encoding=UTF-8"
-          TERM: dumb
+          GRADLE_OPTS: "-Xmx3072m -Dfile.encoding=UTF-8"
+          ANDROID_SDK_ROOT: $ANDROID_HOME
           ANDROID_NDK_HOME: $ANDROID_HOME/ndk/25.2.9519653
+          TERM: dumb
 
-      # ==================== FIND APK FILES ====================
-      - name: Locate APK Files
-        id: find-apk
+      - name: Find APK
+        id: apk
         run: |
-          echo "Searching for APK files..."
-          APK_PATH=$(find . -name "*.apk" -not -path "*/test/*" -not -path "*/androidTest/*" | head -20)
-          echo "APK files found:"
-          echo "$APK_PATH"
-          
-          # List all APKs with sizes
-          find . -name "*.apk" -not -path "*/test/*" -not -path "*/androidTest/*" -exec ls -lh {} \;
-          
-          # Set output variable
-          FIRST_APK=$(find . -name "*.apk" -not -path "*/test/*" -not -path "*/androidTest/*" | head -1)
-          echo "apk_path=$FIRST_APK" >> $GITHUB_OUTPUT
-          echo "apk_name=$(basename $FIRST_APK)" >> $GITHUB_OUTPUT
-          echo "build_type=${{ github.event.inputs.build_type || 'debug' }}" >> $GITHUB_OUTPUT
-        id: find_apk
+          APK=$(find app/build/outputs/apk -name "*.apk" | head -1)
+          echo "apk_path=$APK" >> $GITHUB_OUTPUT
+          echo "apk_name=$(basename $APK)" >> $GITHUB_OUTPUT
+          ls -lh "$APK"
 
-      # ==================== GENERATE BUILD INFO ====================
-      - name: Generate Build Info
-        if: always()
-        run: |
-          BUILD_INFO_FILE="build_info.txt"
-          echo "=== OMNEX FF PANEL BUILD INFO ===" > $BUILD_INFO_FILE
-          echo "Build Type: ${{ github.event.inputs.build_type || 'debug' }}" >> $BUILD_INFO_FILE
-          echo "Version: $VERSION_NAME ($VERSION_CODE)" >> $BUILD_INFO_FILE
-          echo "Application ID: $APPLICATION_ID" >> $BUILD_INFO_FILE
-          echo "Architecture: ${{ matrix.arch }}" >> $BUILD_INFO_FILE
-          echo "Build Date: $(date -u)" >> $BUILD_INFO_FILE
-          echo "Runner: $(hostname)" >> $BUILD_INFO_FILE
-          echo "" >> $BUILD_INFO_FILE
-          echo "=== APK LOCATIONS ===" >> $BUILD_INFO_FILE
-          find . -name "*.apk" -not -path "*/test/*" -not -path "*/androidTest/*" -exec ls -lh {} \; >> $BUILD_INFO_FILE
-          echo "" >> $BUILD_INFO_FILE
-          echo "=== NATIVE LIBRARIES ===" >> $BUILD_INFO_FILE
-          find . -name "*.so" -path "*/obj/*" -exec ls -lh {} \; >> $BUILD_INFO_FILE
-          echo "" >> $BUILD_INFO_FILE
-          echo "=== BUILD LOG SUMMARY ===" >> $BUILD_INFO_FILE
-          tail -50 build_output.log >> $BUILD_INFO_FILE 2>/dev/null || true
-          cat $BUILD_INFO_FILE
-
-      # ==================== UPLOAD APK ARTIFACTS ====================
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: omnex-ff-panel-${{ github.event.inputs.build_type || 'debug' }}-${{ matrix.arch }}-${{ github.run_number }}
-          path: |
-            app/build/outputs/apk/**/*.apk
-            build_info.txt
-            !**/test/**
-            !**/androidTest/**
-          retention-days: 90
-          if-no-files-found: error
-
-      # ==================== UPLOAD ALL ARTIFACTS ====================
-      - name: Upload Complete Build Artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: omnex-ff-complete-build-${{ github.run_number }}
-          path: |
-            app/build/outputs/
-            build_info.txt
-            build_output.log
-            native_build_output.log
-          retention-days: 90
-          if-no-files-found: warn
-
-      # ==================== SIGN APK (release only) ====================
-      - name: Sign APK with V1/V2/V3
-        if: ${{ github.event.inputs.build_type == 'release' && always() }}
-        run: |
-          APK_FILE=$(find . -name "app-*-release-unsigned.apk" -not -path "*/test/*" | head -1)
-          if [ -n "$APK_FILE" ]; then
-            echo "Signing APK: $APK_FILE"
-            jarsigner -verbose \
-              -sigalg SHA256withRSA \
-              -digestalg SHA-256 \
-              -keystore <(echo "$KEYSTORE_BASE64" | base64 -d) \
-              -storepass "$KEYSTORE_PASSWORD" \
-              -keypass "$KEY_PASSWORD" \
-              "$APK_FILE" \
-              "$KEY_ALIAS"
-            
-            # Zipalign
-            zipalign -v 4 "$APK_FILE" "app-release-signed.apk"
-            
-            # Move signed APK
-            mv "app-release-signed.apk" "app/build/outputs/apk/release/app-release-signed.apk"
-          fi
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-
-      # ==================== UPLOAD SIGNED APK ====================
-      - name: Upload Signed Release APK
-        if: ${{ github.event.inputs.build_type == 'release' && always() }}
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: omnex-ff-release-signed-${{ github.run_number }}
-          path: app/build/outputs/apk/release/app-release-signed.apk
+          name: omnex-ff-panel-${{ github.run_number }}
+          path: ${{ steps.apk.outputs.apk_path }}
           retention-days: 90
 
-      # ==================== PUBLISH TO GITHUB RELEASE ====================
-      - name: Create GitHub Release & Upload
-        if: ${{ github.event.inputs.build_type == 'release' && success() }}
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ env.VERSION_NAME }}
-          name: OMNEX FF Panel v${{ env.VERSION_NAME }}
-          body: |
-            ## OMNEX FF Panel v${{ env.VERSION_NAME }}
-            
-            ### Features
-            - ⚡ 11-tab mod panel (AIM, ESP, PLAYER, TELEPORT, FLY, DRIVE, GLOO, MAGIC, AURA, AI, BYPASS)
-            - 🧠 9 native threads running in real-time
-            - 🛡️ Anti-cheat bypass (root hide, emulator bypass, memory protection)
-            - 🎯 Aimbot, triggerbot, ESP, fly, teleport, magic bullet, aura
-            - 💎 Premium dark UI with crimson/gold gradient
-            
-            ### Installation
-            1. Install on rooted Android device
-            2. Enable Shizuku privilege manager
-            3. Grant all permissions
-            4. Launch Free Fire from the panel
-            5. Wait for injection confirmation
-            
-            ### Technical Details
-            - Memory reading/writing via /proc/PID/mem
-            - ptrace attached for real-time hooking
-            - il2cpp.so module base resolution
-            - NDK arm64-v8a / armeabi-v7a
-            
-            ### Build Info
-            - Build ID: ${{ github.run_number }}
-            - Commit: ${{ github.sha }}
-            - Branch: ${{ github.ref_name }}
-            - Date: $(date -u)
-          files: |
-            app/build/outputs/apk/release/app-release-signed.apk
-            build_info.txt
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ==================== DEPLOY TO FIREBASE (OPTIONAL) ====================
-      - name: Deploy to Firebase Hosting
-        if: ${{ github.event.inputs.build_type == 'debug' && success() }}
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: ${{ secrets.FIREBASE_PROJECT_ID }}
-          channelId: live
-        env:
-          FIREBASE_CLI_PREVIEWS: hostingchannels
-
-      # ==================== BUILD SUMMARY ====================
       - name: Build Summary
         if: always()
         run: |
-          echo "=============================================="
-          echo "  OMNEX FF PANEL - BUILD COMPLETE"
-          echo "=============================================="
-          echo "Build Type: ${{ github.event.inputs.build_type || 'debug' }}"
-          echo "Architecture: ${{ matrix.arch }}"
-          echo "Build Number: ${{ github.run_number }}"
-          echo "Commit: ${{ github.sha }}"
-          echo "Branch: ${{ github.ref_name }}"
-          echo "=============================================="
-          echo ""
-          echo "APK Files:"
-          find . -name "*.apk" -not -path "*/test/*" | while read f; do
-            echo "  - $f ($(du -h $f | cut -f1))"
-          done
-          echo ""
-          echo "Native Libraries:"
-          find . -name "*.so" -path "*/obj/*" 2>/dev/null | while read f; do
-            echo "  - $f ($(du -h $f | cut -f1))"
-          done
-          echo "=============================================="
-
-      # ==================== NOTIFICATION ON FAILURE ====================
-      - name: Notify on Failure
-        if: failure()
-        run: |
-          echo "❌ BUILD FAILED"
-          echo ""
-          echo "Check logs for details."
-          echo "Build output:"
-          cat build_output.log 2>/dev/null || echo "No build log found"
-          echo ""
-          cat native_build_output.log 2>/dev/null || echo "No native build log found"
-          exit 1
+          echo "======================================"
+          echo "BUILD: ${{ github.run_number }}"
+          echo "STATUS: ${{ job.status }}"
+          echo "COMMIT: ${{ github.sha }}"
+          echo "======================================"
+          tail -20 build_output.log 2>/dev/null || true
