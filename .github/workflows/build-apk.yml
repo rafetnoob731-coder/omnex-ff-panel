@@ -32,7 +32,7 @@ jobs:
       - name: Install Android SDK tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq lib32stdc++6 lib32z1 libtinfo5 2>/dev/null || true
+          sudo apt-get install -y -qq tar unzip wget lib32stdc++6 lib32z1 libtinfo5 2>/dev/null || true
           
           mkdir -p $ANDROID_HOME/cmdline-tools/latest
           wget -q https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip -O /tmp/sdk-tools.zip
@@ -43,7 +43,6 @@ jobs:
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653" "cmake;3.22.1" 2>&1 || true
           
           which sdkmanager && sdkmanager --version
-          which cmake && cmake --version
           which adb && adb version
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls $ANDROID_HOME/ndk/25.2.9519653/ || echo "NDK not found"
@@ -55,26 +54,11 @@ jobs:
           echo "cmake.dir=$HOME/android-sdk/cmake/3.22.1" >> local.properties
           cat local.properties
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle', '**/gradle/wrapper/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
-
       - name: Make gradlew executable
         run: chmod +x gradlew && ls -la gradlew
 
       - name: Debug Build
         run: |
-          export ANDROID_HOME=$HOME/android-sdk
-          export ANDROID_SDK_ROOT=$ANDROID_HOME
-          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_NDK_HOME:$PATH
-          
           echo "=== Environment ==="
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "sdk.dir in local.properties:"
