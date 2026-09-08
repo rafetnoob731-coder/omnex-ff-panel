@@ -35,7 +35,13 @@ jobs:
           which cmake
           ls $ANDROID_HOME/ndk/
 
-      - name: Cache Gradle
+      - name: Create local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "ndk.dir=$ANDROID_HOME/ndk/25.2.9519653" >> local.properties
+          echo "cmake.dir=$ANDROID_HOME/cmake/3.22.1" >> local.properties
+          cat local.properties
+        shell: bash
         uses: actions/cache@v4
         with:
           path: |
@@ -53,6 +59,7 @@ jobs:
           export ANDROID_SDK_ROOT=$ANDROID_HOME
           export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653
           export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_NDK_HOME:$PATH
+          cat local.properties
           ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build_output.log
           echo "---BUILD DONE---"
           find . -name "*.apk" 2>/dev/null || echo "No APK found by find"
