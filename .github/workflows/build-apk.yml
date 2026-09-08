@@ -13,6 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    env:
+      ANDROID_HOME: $HOME/android-sdk
+      ANDROID_SDK_ROOT: $ANDROID_HOME
+      ANDROID_NDK_HOME: $ANDROID_HOME/ndk/25.2.9519653
+      PATH: $HOME/android-sdk/cmdline-tools/latest/bin:$HOME/android-sdk/platform-tools:$HOME/android-sdk/ndk/25.2.9519653:$PATH
 
     steps:
       - name: Checkout
@@ -29,21 +34,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq lib32stdc++6 lib32z1 libtinfo5 2>/dev/null || true
           
-          # Install command-line tools
-          mkdir -p $HOME/android-sdk/cmdline-tools/latest
+          mkdir -p $ANDROID_HOME/cmdline-tools/latest
           wget -q https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip -O /tmp/sdk-tools.zip
-          unzip -q /tmp/sdk-tools.zip -d $HOME/android-sdk/cmdline-tools/latest/
+          unzip -q /tmp/sdk-tools.zip -d $ANDROID_HOME/cmdline-tools/latest/
           rm /tmp/sdk-tools.zip
           
-          export ANDROID_HOME=$HOME/android-sdk
-          export ANDROID_SDK_ROOT=$ANDROID_HOME
-          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
-          
-          # Accept licenses and install tools
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653" "cmake;3.22.1" 2>&1 || true
           
-          # Verify
           which sdkmanager && sdkmanager --version
           which cmake && cmake --version
           which adb && adb version
